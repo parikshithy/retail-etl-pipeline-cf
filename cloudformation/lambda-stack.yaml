@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Lambda function for the retail ETL pipeline - CloudFormation parallel
+  stack (_cf suffix). Starts the Glue workflow when a CSV lands in raw/.
+  Code is packaged from lambda/lambda_function.py in the repo and
+  uploaded to S3 by the deploy workflow before this stack runs - see
+  Parameters below.
+
+Parameters:
+  CodeS3Bucket:
+    Type: String
+    Description: >
+      S3 bucket containing the zipped Lambda deployment package
+      (uploaded by the deploy workflow from lambda/lambda_function.py).
+
+  CodeS3Key:
+    Type: String
+    Description: S3 key of the zipped Lambda deployment package.
+    Default: lambda-packages/lambda_function.zip
+
+Resources:
+  TriggerLambdaCf:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: retail-etl-trigger-lambda-cf
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !ImportValue retail-etl-cf-lambda-role-arn
+      Timeout: 30
+      Environment:
+        Variables:
+          GLUE_WORKFLOW_NAME: retail-etl-workflow-cf
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+
+  LambdaInvokePermissionCf:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TriggerLambdaCf
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !ImportValue retail-etl-cf-input-bucket-arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the trigger Lambda function
+    Value: !GetAtt TriggerLambdaCf.Arn
+    Export:
+      Name: retail-etl-cf-lambda-function-arn
+
+  LambdaFunctionName:
+    Description: Name of the trigger Lambda function
+    Value: !Ref TriggerLambdaCf
+    Export:
+      Name: retail-etl-cf-lambda-function-name

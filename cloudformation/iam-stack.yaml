@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  IAM roles (least privilege) for the retail ETL pipeline - CloudFormation
+  parallel stack (_cf suffix). Creates roles for Lambda, Glue ETL job,
+  input crawler, and output crawler.
+
+Resources:
+  LambdaRoleCf:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: retail-etl-lambda-role-cf
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: retail-etl-lambda-policy-cf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: StartGlueWorkflowOnly
+                Effect: Allow
+                Action: glue:StartWorkflowRun
+                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/retail-etl-workflow-cf
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+  GlueJobRoleCf:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: retail-etl-glue-job-role-cf
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: retail-etl-glue-job-policy-cf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListInputBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::retail-etl-input-s3-cf
+              - Sid: ReadInputAndScripts
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - arn:aws:s3:::retail-etl-input-s3-cf/raw/*
+                  - arn:aws:s3:::retail-etl-input-s3-cf/scripts/*
+              - Sid: ListOutputBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::retail-etl-output-s3-cf
+              - Sid: WriteProcessedOutput
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: arn:aws:s3:::retail-etl-output-s3-cf/processed/*
+              - Sid: ReadWorkflowRunProperties
+                Effect: Allow
+                Action:
+                  - glue:GetWorkflowRunProperties
+                  - glue:GetWorkflowRun
+                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/retail-etl-workflow-cf
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+  GlueCrawlerInputRoleCf:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: retail-etl-glue-crawler-input-role-cf
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: retail-etl-crawler-input-policy-cf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListInputBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::retail-etl-input-s3-cf
+              - Sid: ReadRawData
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::retail-etl-input-s3-cf/raw/*
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+  GlueCrawlerOutputRoleCf:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: retail-etl-glue-crawler-output-role-cf
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: retail-etl-crawler-output-policy-cf
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListOutputBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::retail-etl-output-s3-cf
+              - Sid: ReadProcessedData
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::retail-etl-output-s3-cf/processed/*
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+Outputs:
+  LambdaRoleArn:
+    Description: ARN of the Lambda execution role
+    Value: !GetAtt LambdaRoleCf.Arn
+    Export:
+      Name: retail-etl-cf-lambda-role-arn
+
+  GlueJobRoleArn:
+    Description: ARN of the Glue ETL job role
+    Value: !GetAtt GlueJobRoleCf.Arn
+    Export:
+      Name: retail-etl-cf-glue-job-role-arn
+
+  GlueCrawlerInputRoleArn:
+    Description: ARN of the Glue input crawler role
+    Value: !GetAtt GlueCrawlerInputRoleCf.Arn
+    Export:
+      Name: retail-etl-cf-crawler-input-role-arn
+
+  GlueCrawlerOutputRoleArn:
+    Description: ARN of the Glue output crawler role
+    Value: !GetAtt GlueCrawlerOutputRoleCf.Arn
+    Export:
+      Name: retail-etl-cf-crawler-output-role-arn

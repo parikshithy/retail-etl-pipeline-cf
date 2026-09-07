@@ -1,0 +1,6 @@
+sale_id,customer_name,product,quantity,amount,status
+3001,John Smith,Laptop,1,850.00,COMPLETED
+3002,Sarah Lee,Keyboard,2,90.00,COMPLETED
+3003,David Kumar,Monitor,1,275.50,PENDING
+3004,Emma Wilson,Mouse,3,75.00,COMPLETED
+3005,Michael Brown,USB Hub,2,60.00,PENDING

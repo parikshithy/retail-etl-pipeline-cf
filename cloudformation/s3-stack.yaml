@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  S3 buckets (input/output) for the retail ETL pipeline - CloudFormation
+  parallel stack (_cf suffix).
+
+Resources:
+  InputBucketCf:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: retail-etl-input-s3-cf
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+  OutputBucketCf:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: retail-etl-output-s3-cf
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Project
+          Value: retail-etl-pipeline
+
+Outputs:
+  InputBucketName:
+    Description: Name of the input bucket
+    Value: !Ref InputBucketCf
+    Export:
+      Name: retail-etl-cf-input-bucket-name
+
+  InputBucketArn:
+    Description: ARN of the input bucket
+    Value: !GetAtt InputBucketCf.Arn
+    Export:
+      Name: retail-etl-cf-input-bucket-arn
+
+  OutputBucketName:
+    Description: Name of the output bucket
+    Value: !Ref OutputBucketCf
+    Export:
+      Name: retail-etl-cf-output-bucket-name
+
+  OutputBucketArn:
+    Description: ARN of the output bucket
+    Value: !GetAtt OutputBucketCf.Arn
+    Export:
+      Name: retail-etl-cf-output-bucket-arn

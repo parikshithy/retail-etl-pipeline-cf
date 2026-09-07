@@ -1,0 +1,187 @@
+name: Deploy or Destroy CF Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose deploy or destroy"
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-2
+  INPUT_BUCKET: retail-etl-input-s3-cf
+  OUTPUT_BUCKET: retail-etl-output-s3-cf
+
+jobs:
+  deploy:
+    if: github.event.inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ---------- IAM STACK ----------
+      - name: Preview change set - IAM stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name retail-etl-iam-stack-cf \
+            --template-file cloudformation/iam-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-execute-changeset \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Execute change set - IAM stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name retail-etl-iam-stack-cf \
+            --template-file cloudformation/iam-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- S3 STACK ----------
+      - name: Deploy S3 stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name retail-etl-s3-stack-cf \
+            --template-file cloudformation/s3-stack.yaml \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- UPLOAD GLUE SCRIPT FROM REPO ----------
+      - name: Upload Glue ETL script (glue/glue_job.py) to input bucket
+        run: |
+          aws s3 cp glue/glue_job.py \
+            "s3://${{ env.INPUT_BUCKET }}/scripts/glue_job.py" \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- PACKAGE + UPLOAD LAMBDA CODE FROM REPO ----------
+      - name: Zip lambda/lambda_function.py
+        run: |
+          cd lambda
+          zip lambda_function.zip lambda_function.py
+          cd ..
+
+      - name: Upload Lambda deployment package to input bucket
+        run: |
+          aws s3 cp lambda/lambda_function.zip \
+            "s3://${{ env.INPUT_BUCKET }}/lambda-packages/lambda_function.zip" \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- LAMBDA STACK ----------
+      - name: Deploy Lambda stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name retail-etl-lambda-stack-cf \
+            --template-file cloudformation/lambda-stack.yaml \
+            --parameter-overrides \
+              CodeS3Bucket=${{ env.INPUT_BUCKET }} \
+              CodeS3Key=lambda-packages/lambda_function.zip \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- GLUE STACK ----------
+      - name: Deploy Glue stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name retail-etl-glue-stack-cf \
+            --template-file cloudformation/glue-stack.yaml \
+            --region ${{ env.AWS_REGION }}
+
+      # ---------- WIRE S3 EVENT NOTIFICATION ----------
+      - name: Configure S3 event notification to Lambda
+        run: |
+          LAMBDA_ARN=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-lambda-function-arn'].Value" \
+            --output text)
+
+          cat > /tmp/notification.json <<EOF
+          {
+            "LambdaFunctionConfigurations": [
+              {
+                "LambdaFunctionArn": "$LAMBDA_ARN",
+                "Events": ["s3:ObjectCreated:*"],
+                "Filter": {
+                  "Key": {
+                    "FilterRules": [
+                      { "Name": "prefix", "Value": "raw/" },
+                      { "Name": "suffix", "Value": ".csv" }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+          aws s3api put-bucket-notification-configuration \
+            --bucket ${{ env.INPUT_BUCKET }} \
+            --notification-configuration file:///tmp/notification.json \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy summary
+        run: echo "All _cf stacks deployed and wired successfully."
+
+  destroy:
+    if: github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Remove S3 event notification
+        run: |
+          aws s3api put-bucket-notification-configuration \
+            --bucket ${{ env.INPUT_BUCKET }} \
+            --notification-configuration '{}' \
+            --region ${{ env.AWS_REGION }} || true
+
+      - name: Empty input bucket
+        run: |
+          aws s3 rm "s3://${{ env.INPUT_BUCKET }}" --recursive || true
+
+      - name: Empty output bucket
+        run: |
+          aws s3 rm "s3://${{ env.OUTPUT_BUCKET }}" --recursive || true
+
+      - name: Delete Glue stack
+        run: |
+          aws cloudformation delete-stack --stack-name retail-etl-glue-stack-cf --region ${{ env.AWS_REGION }}
+          aws cloudformation wait stack-delete-complete --stack-name retail-etl-glue-stack-cf --region ${{ env.AWS_REGION }}
+
+      - name: Delete Lambda stack
+        run: |
+          aws cloudformation delete-stack --stack-name retail-etl-lambda-stack-cf --region ${{ env.AWS_REGION }}
+          aws cloudformation wait stack-delete-complete --stack-name retail-etl-lambda-stack-cf --region ${{ env.AWS_REGION }}
+
+      - name: Delete S3 stack
+        run: |
+          aws cloudformation delete-stack --stack-name retail-etl-s3-stack-cf --region ${{ env.AWS_REGION }}
+          aws cloudformation wait stack-delete-complete --stack-name retail-etl-s3-stack-cf --region ${{ env.AWS_REGION }}
+
+      - name: Delete IAM stack
+        run: |
+          aws cloudformation delete-stack --stack-name retail-etl-iam-stack-cf --region ${{ env.AWS_REGION }}
+          aws cloudformation wait stack-delete-complete --stack-name retail-etl-iam-stack-cf --region ${{ env.AWS_REGION }}
+
+      - name: Destroy summary
+        run: echo "All _cf stacks destroyed successfully."

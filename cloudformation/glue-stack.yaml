@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Glue Data Catalog database, ETL job, crawlers, and workflow for the
+  retail ETL pipeline - CloudFormation parallel stack (_cf suffix).
+  The ETL script referenced below (scripts/glue_job.py) is uploaded to
+  the input bucket by the deploy workflow from glue/glue_job.py in the
+  repo, before this stack is deployed.
+
+Resources:
+  CatalogDatabaseCf:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: retail_etl_catalog_db_cf
+        Description: Catalog database for the retail ETL pipeline (CFN stack)
+
+  TransformJobCf:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: retail-etl-transform-job-cf
+      Role: !ImportValue retail-etl-cf-glue-job-role-arn
+      GlueVersion: "3.0"
+      Command:
+        Name: pythonshell
+        PythonVersion: "3.9"
+        ScriptLocation: !Sub s3://retail-etl-input-s3-cf/scripts/glue_job.py
+      MaxCapacity: 0.0625
+      MaxRetries: 0
+      Timeout: 10
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      Tags:
+        Project: retail-etl-pipeline
+
+  InputCrawlerCf:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: retail-etl-input-crawler-cf
+      Role: !ImportValue retail-etl-cf-crawler-input-role-arn
+      DatabaseName: !Ref CatalogDatabaseCf
+      TablePrefix: input_
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://retail-etl-input-s3-cf/raw/
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        Project: retail-etl-pipeline
+
+  OutputCrawlerCf:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: retail-etl-output-crawler-cf
+      Role: !ImportValue retail-etl-cf-crawler-output-role-arn
+      DatabaseName: !Ref CatalogDatabaseCf
+      TablePrefix: output_
+      Targets:
+        S3Targets:
+          - Path: !Sub s3://retail-etl-output-s3-cf/processed/
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Tags:
+        Project: retail-etl-pipeline
+
+  RetailEtlWorkflowCf:
+    Type: AWS::Glue::Workflow
+    Properties:
+      Name: retail-etl-workflow-cf
+      Description: Crawl input, run ETL job, crawl output - CFN stack
+      Tags:
+        Project: retail-etl-pipeline
+
+  StartTriggerCf:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: start-trigger-cf
+      Type: ON_DEMAND
+      WorkflowName: !Ref RetailEtlWorkflowCf
+      Actions:
+        - CrawlerName: !Ref InputCrawlerCf
+      Tags:
+        Project: retail-etl-pipeline
+
+  AfterInputCrawlTriggerCf:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: after-input-crawl-cf
+      Type: CONDITIONAL
+      WorkflowName: !Ref RetailEtlWorkflowCf
+      StartOnCreation: true
+      Predicate:
+        Conditions:
+          - LogicalOperator: EQUALS
+            CrawlerName: !Ref InputCrawlerCf
+            CrawlState: SUCCEEDED
+      Actions:
+        - JobName: !Ref TransformJobCf
+      Tags:
+        Project: retail-etl-pipeline
+
+  AfterEtlJobTriggerCf:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: after-etl-job-cf
+      Type: CONDITIONAL
+      WorkflowName: !Ref RetailEtlWorkflowCf
+      StartOnCreation: true
+      Predicate:
+        Conditions:
+          - LogicalOperator: EQUALS
+            JobName: !Ref TransformJobCf
+            State: SUCCEEDED
+      Actions:
+        - CrawlerName: !Ref OutputCrawlerCf
+      Tags:
+        Project: retail-etl-pipeline
+
+Outputs:
+  DatabaseName:
+    Description: Name of the Glue Catalog database
+    Value: !Ref CatalogDatabaseCf
+    Export:
+      Name: retail-etl-cf-database-name
+
+  WorkflowName:
+    Description: Name of the Glue workflow
+    Value: !Ref RetailEtlWorkflowCf
+    Export:
+      Name: retail-etl-cf-workflow-name
+
+  TransformJobName:
+    Description: Name of the Glue ETL job
+    Value: !Ref TransformJobCf
+    Export:
+      Name: retail-etl-cf-transform-job-name

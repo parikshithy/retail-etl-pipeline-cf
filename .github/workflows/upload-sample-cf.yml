@@ -1,0 +1,64 @@
+name: Upload Sample CSV to CF Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      filename:
+        description: "CSV file under sample-data/ to upload"
+        required: true
+        type: string
+        default: sample.csv
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-2
+  BUCKET_NAME: retail-etl-input-s3-cf
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if _cf input bucket exists
+        id: check_bucket
+        run: |
+          if aws s3api head-bucket --bucket "${{ env.BUCKET_NAME }}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Exit gracefully if bucket not found
+        if: steps.check_bucket.outputs.exists == 'false'
+        run: |
+          echo "::warning::No _cf resources found. Bucket '${{ env.BUCKET_NAME }}' does not exist. Run the deploy workflow first."
+          exit 0
+
+      - name: Verify file exists in sample-data/
+        if: steps.check_bucket.outputs.exists == 'true'
+        run: |
+          if [ ! -f "sample-data/${{ github.event.inputs.filename }}" ]; then
+            echo "::error::File sample-data/${{ github.event.inputs.filename }} not found in repo."
+            exit 1
+          fi
+
+      - name: Upload CSV to raw/
+        if: steps.check_bucket.outputs.exists == 'true'
+        run: |
+          aws s3 cp "sample-data/${{ github.event.inputs.filename }}" \
+            "s3://${{ env.BUCKET_NAME }}/raw/${{ github.event.inputs.filename }}" \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Uploaded ${{ github.event.inputs.filename }} to s3://${{ env.BUCKET_NAME }}/raw/"
+          echo "This will trigger Lambda -> Glue workflow -> crawlers automatically."
