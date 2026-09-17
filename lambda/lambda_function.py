@@ -17,21 +17,35 @@ OUTPUT_BUCKET_NAME = os.environ["OUTPUT_BUCKET_NAME"]
 
 
 def lambda_handler(event, context):
-    # Log the complete incoming S3 event for debugging
+    # Log the complete incoming event for debugging
     print(f"Received event: {event}")
 
-    # Read the first S3 event record
-    record = event["Records"][0]
+    # This Lambda is invoked via an EventBridge rule (not a direct S3
+    # bucket notification), so the event shape is EventBridge's own
+    # "Object Created" schema, not the old S3 Records[] format:
+    #   event["detail"]["bucket"]["name"]
+    #   event["detail"]["object"]["key"]
+    #   event["detail"]["object"]["size"]
+    if event.get("detail-type") != "Object Created" or event.get("source") != "aws.s3":
+        print(f"Ignored: unexpected event source/detail-type: {event.get('source')} / {event.get('detail-type')}")
+        return {
+            "statusCode": 200,
+            "message": "Ignored non-S3-object-created event"
+        }
+
+    detail = event["detail"]
 
     # Get the S3 bucket name
-    bucket_name = record["s3"]["bucket"]["name"]
+    bucket_name = detail["bucket"]["name"]
 
     # Get the uploaded object's size
-    object_size = record["s3"]["object"].get("size", 0)
+    object_size = detail["object"].get("size", 0)
 
-    # S3 object keys can be URL encoded, so decode the key
+    # EventBridge already delivers the key decoded, but unquote_plus is
+    # a harmless no-op on an already-decoded string, so keep it as a
+    # safety net in case that ever changes.
     object_key = urllib.parse.unquote_plus(
-        record["s3"]["object"]["key"]
+        detail["object"]["key"]
     )
 
     print(f"Bucket: {bucket_name}")
