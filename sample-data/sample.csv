@@ -4,3 +4,4 @@ sale_id,customer_name,product,quantity,amount,status
 3003,David Kumar,Monitor,1,275.50,PENDING
 3004,Emma Wilson,Mouse,3,75.00,COMPLETED
 3005,Michael Brown,USB Hub,2,60.00,PENDING
+3006,Parikshith N Y,Monitor,1,275.50,COMPLETED
