@@ -1,4 +1,17 @@
-  .aws-sam/
-  __pycache__/
-  *.pyc
-  .env
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+
+# AWS SAM / local build artifacts
+.aws-sam/
+
+# Environment files
+.env
+.env.local
+
+# Editor/OS junk
+.DS_Store
+.vscode/
+.idea/
