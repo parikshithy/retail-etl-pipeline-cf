@@ -113,6 +113,33 @@ output_bucket, output_prefix = split_s3_uri(output_path)
 if output_prefix and not output_prefix.endswith("/"):
     output_prefix += "/"
 
+
+def clear_output_prefix(bucket, prefix):
+    # Remove any existing part-*.csv files under this run's output
+    # folder before writing the new one. Without this, re-uploading the
+    # same source file (or any file that resolves to the same output
+    # basename) leaves the old part file behind alongside the new one,
+    # and the output crawler/Athena would then show every row twice.
+    paginator = s3.get_paginator("list_objects_v2")
+    keys_to_delete = []
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            keys_to_delete.append({"Key": obj["Key"]})
+
+    if not keys_to_delete:
+        return
+
+    print(f"Clearing {len(keys_to_delete)} existing object(s) under s3://{bucket}/{prefix}")
+
+    # delete_objects accepts at most 1000 keys per call
+    for i in range(0, len(keys_to_delete), 1000):
+        batch = keys_to_delete[i:i + 1000]
+        s3.delete_objects(Bucket=bucket, Delete={"Objects": batch})
+
+
+clear_output_prefix(output_bucket, output_prefix)
+
 output_key = f"{output_prefix}part-{uuid.uuid4().hex}.csv"
 
 buffer = io.StringIO()

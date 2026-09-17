@@ -24,7 +24,9 @@ Resources:
       Command:
         Name: pythonshell
         PythonVersion: "3.9"
-        ScriptLocation: !Sub s3://retail-etl-input-s3-cf/scripts/glue_job.py
+        ScriptLocation: !Sub
+          - s3://${BucketName}/scripts/glue_job.py
+          - BucketName: !ImportValue retail-etl-cf-input-bucket-name
       MaxCapacity: 0.0625
       MaxRetries: 0
       Timeout: 10
@@ -42,7 +44,9 @@ Resources:
       TablePrefix: input_
       Targets:
         S3Targets:
-          - Path: !Sub s3://retail-etl-input-s3-cf/raw/
+          - Path: !Sub
+              - s3://${BucketName}/raw/
+              - BucketName: !ImportValue retail-etl-cf-input-bucket-name
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
@@ -58,7 +62,9 @@ Resources:
       TablePrefix: output_
       Targets:
         S3Targets:
-          - Path: !Sub s3://retail-etl-output-s3-cf/processed/
+          - Path: !Sub
+              - s3://${BucketName}/processed/
+              - BucketName: !ImportValue retail-etl-cf-output-bucket-name
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG

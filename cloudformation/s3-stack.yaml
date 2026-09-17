@@ -1,13 +1,18 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   S3 buckets (input/output) for the retail ETL pipeline - CloudFormation
-  parallel stack (_cf suffix).
+  parallel stack (_cf suffix). Bucket names include the account ID so
+  this template can be deployed in any AWS account without colliding
+  with another deployment's globally-unique S3 bucket names.
 
 Resources:
   InputBucketCf:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: retail-etl-input-s3-cf
+      BucketName: !Sub retail-etl-input-s3-cf-${AWS::AccountId}
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -32,7 +37,7 @@ Resources:
   OutputBucketCf:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: retail-etl-output-s3-cf
+      BucketName: !Sub retail-etl-output-s3-cf-${AWS::AccountId}
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true

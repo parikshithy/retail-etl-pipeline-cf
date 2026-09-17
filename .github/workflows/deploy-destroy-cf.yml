@@ -10,14 +10,17 @@ on:
         options:
           - deploy
           - destroy
+      confirm_destroy:
+        description: "To destroy, type the exact text: destroy-everything"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 env:
   AWS_REGION: ap-southeast-2
-  INPUT_BUCKET: retail-etl-input-s3-cf
-  OUTPUT_BUCKET: retail-etl-output-s3-cf
 
 jobs:
   deploy:
@@ -44,6 +47,28 @@ jobs:
             --no-execute-changeset \
             --region ${{ env.AWS_REGION }}
 
+      - name: Print change set contents
+        run: |
+          CHANGESET_NAME=$(aws cloudformation list-change-sets \
+            --stack-name retail-etl-iam-stack-cf \
+            --region ${{ env.AWS_REGION }} \
+            --query "Summaries[0].ChangeSetName" --output text)
+
+          if [ "$CHANGESET_NAME" != "None" ] && [ -n "$CHANGESET_NAME" ]; then
+            echo "----- Pending IAM stack changes -----"
+            aws cloudformation describe-change-set \
+              --stack-name retail-etl-iam-stack-cf \
+              --change-set-name "$CHANGESET_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --query "Changes[].ResourceChange.{Action:Action,Resource:LogicalResourceId,Type:ResourceType}" \
+              --output table
+          else
+            echo "No pending changes to the IAM stack."
+          fi
+        # This step exists precisely so the change set preview above is
+        # actually looked at by someone before it's applied, instead of
+        # sitting unread between a preview call and an immediate execute.
+
       - name: Execute change set - IAM stack
         run: |
           aws cloudformation deploy \
@@ -60,11 +85,30 @@ jobs:
             --template-file cloudformation/s3-stack.yaml \
             --region ${{ env.AWS_REGION }}
 
+      # ---------- RESOLVE ACTUAL BUCKET NAMES (account-suffixed, never hardcoded) ----------
+      - name: Resolve bucket names from CloudFormation exports
+        run: |
+          INPUT_BUCKET=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-input-bucket-name'].Value" \
+            --output text)
+
+          OUTPUT_BUCKET=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-output-bucket-name'].Value" \
+            --output text)
+
+          echo "INPUT_BUCKET=$INPUT_BUCKET" >> "$GITHUB_ENV"
+          echo "OUTPUT_BUCKET=$OUTPUT_BUCKET" >> "$GITHUB_ENV"
+
+          echo "Resolved input bucket: $INPUT_BUCKET"
+          echo "Resolved output bucket: $OUTPUT_BUCKET"
+
       # ---------- UPLOAD GLUE SCRIPT FROM REPO ----------
       - name: Upload Glue ETL script (glue/glue_job.py) to input bucket
         run: |
           aws s3 cp glue/glue_job.py \
-            "s3://${{ env.INPUT_BUCKET }}/scripts/glue_job.py" \
+            "s3://$INPUT_BUCKET/scripts/glue_job.py" \
             --region ${{ env.AWS_REGION }}
 
       # ---------- PACKAGE + UPLOAD LAMBDA CODE FROM REPO ----------
@@ -77,7 +121,7 @@ jobs:
       - name: Upload Lambda deployment package to input bucket
         run: |
           aws s3 cp lambda/lambda_function.zip \
-            "s3://${{ env.INPUT_BUCKET }}/lambda-packages/lambda_function.zip" \
+            "s3://$INPUT_BUCKET/lambda-packages/lambda_function.zip" \
             --region ${{ env.AWS_REGION }}
 
       # ---------- LAMBDA STACK ----------
@@ -87,7 +131,7 @@ jobs:
             --stack-name retail-etl-lambda-stack-cf \
             --template-file cloudformation/lambda-stack.yaml \
             --parameter-overrides \
-              CodeS3Bucket=${{ env.INPUT_BUCKET }} \
+              CodeS3Bucket=$INPUT_BUCKET \
               CodeS3Key=lambda-packages/lambda_function.zip \
             --region ${{ env.AWS_REGION }}
 
@@ -99,37 +143,12 @@ jobs:
             --template-file cloudformation/glue-stack.yaml \
             --region ${{ env.AWS_REGION }}
 
-      # ---------- WIRE S3 EVENT NOTIFICATION ----------
-      - name: Configure S3 event notification to Lambda
-        run: |
-          LAMBDA_ARN=$(aws cloudformation list-exports \
-            --region ${{ env.AWS_REGION }} \
-            --query "Exports[?Name=='retail-etl-cf-lambda-function-arn'].Value" \
-            --output text)
-
-          cat > /tmp/notification.json <<EOF
-          {
-            "LambdaFunctionConfigurations": [
-              {
-                "LambdaFunctionArn": "$LAMBDA_ARN",
-                "Events": ["s3:ObjectCreated:*"],
-                "Filter": {
-                  "Key": {
-                    "FilterRules": [
-                      { "Name": "prefix", "Value": "raw/" },
-                      { "Name": "suffix", "Value": ".csv" }
-                    ]
-                  }
-                }
-              }
-            ]
-          }
-          EOF
-
-          aws s3api put-bucket-notification-configuration \
-            --bucket ${{ env.INPUT_BUCKET }} \
-            --notification-configuration file:///tmp/notification.json \
-            --region ${{ env.AWS_REGION }}
+      # NOTE: S3 -> Lambda wiring is no longer a CLI step. The S3 stack
+      # enables EventBridge on the bucket (a static flag) and the Lambda
+      # stack's AWS::Events::Rule + AWS::Lambda::Permission handle the
+      # actual routing - both are real CloudFormation resources, so a
+      # `describe-stacks` on either stack now shows the complete wiring,
+      # and destroying the Lambda stack automatically removes the rule.
 
       - name: Deploy summary
         run: echo "All _cf stacks deployed and wired successfully."
@@ -138,6 +157,14 @@ jobs:
     if: github.event.inputs.action == 'destroy'
     runs-on: ubuntu-latest
     steps:
+      - name: Verify destroy confirmation phrase
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "destroy-everything" ]; then
+            echo "::error::Destroy was not confirmed. Re-run this workflow with 'confirm_destroy' set exactly to: destroy-everything"
+            exit 1
+          fi
+          echo "Destroy confirmed - proceeding to tear down all _cf stacks."
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -148,20 +175,44 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Remove S3 event notification
+      # ---------- RESOLVE BUCKET NAMES BEFORE ANYTHING IS DELETED ----------
+      - name: Resolve bucket names from CloudFormation exports
+        id: resolve
         run: |
-          aws s3api put-bucket-notification-configuration \
-            --bucket ${{ env.INPUT_BUCKET }} \
-            --notification-configuration '{}' \
-            --region ${{ env.AWS_REGION }} || true
+          INPUT_BUCKET=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-input-bucket-name'].Value" \
+            --output text)
+
+          OUTPUT_BUCKET=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-output-bucket-name'].Value" \
+            --output text)
+
+          echo "INPUT_BUCKET=$INPUT_BUCKET" >> "$GITHUB_ENV"
+          echo "OUTPUT_BUCKET=$OUTPUT_BUCKET" >> "$GITHUB_ENV"
+
+          if [ -z "$INPUT_BUCKET" ] || [ "$INPUT_BUCKET" == "None" ]; then
+            echo "::warning::Could not resolve bucket names from exports - S3 stack may already be gone. Skipping bucket cleanup."
+            echo "buckets_found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "buckets_found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # No manual "remove notification" step needed here: the S3 bucket's
+      # EventBridge flag is just a static setting (removed when the S3
+      # stack itself deletes), and the actual rule + Lambda permission
+      # live in the Lambda stack, deleted a few steps below.
 
       - name: Empty input bucket
+        if: steps.resolve.outputs.buckets_found == 'true'
         run: |
-          aws s3 rm "s3://${{ env.INPUT_BUCKET }}" --recursive || true
+          aws s3 rm "s3://$INPUT_BUCKET" --recursive
 
       - name: Empty output bucket
+        if: steps.resolve.outputs.buckets_found == 'true'
         run: |
-          aws s3 rm "s3://${{ env.OUTPUT_BUCKET }}" --recursive || true
+          aws s3 rm "s3://$OUTPUT_BUCKET" --recursive
 
       - name: Delete Glue stack
         run: |

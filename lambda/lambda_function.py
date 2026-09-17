@@ -9,8 +9,11 @@ from botocore.exceptions import ClientError
 glue = boto3.client("glue")
 
 
-# Glue workflow name is provided through the Lambda environment variable
+# Glue workflow name and output bucket are provided through Lambda
+# environment variables, set by the CloudFormation Lambda stack from
+# the S3 stack's exported bucket name - never hardcoded here.
 GLUE_WORKFLOW_NAME = os.environ["GLUE_WORKFLOW_NAME"]
+OUTPUT_BUCKET_NAME = os.environ["OUTPUT_BUCKET_NAME"]
 
 
 def lambda_handler(event, context):
@@ -67,7 +70,7 @@ def lambda_handler(event, context):
     base_name = file_name.rsplit(".", 1)[0]
 
     # Output always goes to the dedicated output bucket, under processed/
-    output_path = f"s3://retail-etl-output-s3-cf/processed/{base_name}/"
+    output_path = f"s3://{OUTPUT_BUCKET_NAME}/processed/{base_name}/"
 
     print(f"Input path: {input_path}")
     print(f"Output path: {output_path}")

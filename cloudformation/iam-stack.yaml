@@ -52,23 +52,24 @@ Resources:
               - Sid: ListInputBucket
                 Effect: Allow
                 Action: s3:ListBucket
-                Resource: arn:aws:s3:::retail-etl-input-s3-cf
+                Resource: !Sub arn:aws:s3:::retail-etl-input-s3-cf-${AWS::AccountId}
               - Sid: ReadInputAndScripts
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - arn:aws:s3:::retail-etl-input-s3-cf/raw/*
-                  - arn:aws:s3:::retail-etl-input-s3-cf/scripts/*
+                  - !Sub arn:aws:s3:::retail-etl-input-s3-cf-${AWS::AccountId}/raw/*
+                  - !Sub arn:aws:s3:::retail-etl-input-s3-cf-${AWS::AccountId}/scripts/*
               - Sid: ListOutputBucket
                 Effect: Allow
                 Action: s3:ListBucket
-                Resource: arn:aws:s3:::retail-etl-output-s3-cf
+                Resource: !Sub arn:aws:s3:::retail-etl-output-s3-cf-${AWS::AccountId}
               - Sid: WriteProcessedOutput
                 Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
-                Resource: arn:aws:s3:::retail-etl-output-s3-cf/processed/*
+                  - s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::retail-etl-output-s3-cf-${AWS::AccountId}/processed/*
               - Sid: ReadWorkflowRunProperties
                 Effect: Allow
                 Action:
@@ -100,11 +101,11 @@ Resources:
               - Sid: ListInputBucket
                 Effect: Allow
                 Action: s3:ListBucket
-                Resource: arn:aws:s3:::retail-etl-input-s3-cf
+                Resource: !Sub arn:aws:s3:::retail-etl-input-s3-cf-${AWS::AccountId}
               - Sid: ReadRawData
                 Effect: Allow
                 Action: s3:GetObject
-                Resource: arn:aws:s3:::retail-etl-input-s3-cf/raw/*
+                Resource: !Sub arn:aws:s3:::retail-etl-input-s3-cf-${AWS::AccountId}/raw/*
       Tags:
         - Key: Project
           Value: retail-etl-pipeline
@@ -130,11 +131,11 @@ Resources:
               - Sid: ListOutputBucket
                 Effect: Allow
                 Action: s3:ListBucket
-                Resource: arn:aws:s3:::retail-etl-output-s3-cf
+                Resource: !Sub arn:aws:s3:::retail-etl-output-s3-cf-${AWS::AccountId}
               - Sid: ReadProcessedData
                 Effect: Allow
                 Action: s3:GetObject
-                Resource: arn:aws:s3:::retail-etl-output-s3-cf/processed/*
+                Resource: !Sub arn:aws:s3:::retail-etl-output-s3-cf-${AWS::AccountId}/processed/*
       Tags:
         - Key: Project
           Value: retail-etl-pipeline

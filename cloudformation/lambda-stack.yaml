@@ -6,6 +6,17 @@ Description: >
   uploaded to S3 by the deploy workflow before this stack runs - see
   Parameters below.
 
+  S3 -> Lambda wiring uses EventBridge instead of a direct S3 bucket
+  notification. This avoids the classic circular dependency (the bucket
+  needing the Lambda's ARN, the Lambda needing the bucket's ARN): the
+  bucket only needs a static "EventBridgeEnabled: true" flag (set in
+  s3-stack.yaml, with no reference to Lambda at all), and the
+  EventBridge Rule below lives in this same stack, so it can reference
+  the Lambda function directly (no cross-stack reference needed) while
+  importing only the bucket *name* (a plain string, already exported by
+  the S3 stack, which deploys before this one) to build its event
+  pattern. Nothing here is wired via a post-deploy CLI call.
+
 Parameters:
   CodeS3Bucket:
     Type: String
@@ -30,6 +41,7 @@ Resources:
       Environment:
         Variables:
           GLUE_WORKFLOW_NAME: retail-etl-workflow-cf
+          OUTPUT_BUCKET_NAME: !ImportValue retail-etl-cf-output-bucket-name
       Tags:
         - Key: Project
           Value: retail-etl-pipeline
@@ -37,13 +49,44 @@ Resources:
         S3Bucket: !Ref CodeS3Bucket
         S3Key: !Ref CodeS3Key
 
+  # EventBridge rule: matches "Object Created" events from the input
+  # bucket, filtered to keys under raw/. Suffix (.csv) and empty-file
+  # checks are left to the Lambda itself (it already validates both),
+  # since EventBridge's per-field matching applies OR semantics across
+  # multiple conditions on the same field, not AND - so enforcing both
+  # prefix and suffix in a single rule pattern isn't straightforward,
+  # and the Lambda-side check already covers it cleanly.
+  S3EventRuleCf:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: retail-etl-s3-object-created-cf
+      Description: >
+        Fires when a new object lands under raw/ in the input bucket,
+        and invokes the trigger Lambda.
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !ImportValue retail-etl-cf-input-bucket-name
+          object:
+            key:
+              - prefix: raw/
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TriggerLambdaCf.Arn
+          Id: retail-etl-trigger-lambda-target-cf
+
   LambdaInvokePermissionCf:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref TriggerLambdaCf
       Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn: !ImportValue retail-etl-cf-input-bucket-arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt S3EventRuleCf.Arn
 
 Outputs:
   LambdaFunctionArn:

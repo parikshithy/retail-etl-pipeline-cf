@@ -14,7 +14,6 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-2
-  BUCKET_NAME: retail-etl-input-s3-cf
 
 jobs:
   upload:
@@ -30,19 +29,42 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check if _cf input bucket exists
+      - name: Resolve input bucket name from CloudFormation exports
+        id: resolve
+        run: |
+          INPUT_BUCKET=$(aws cloudformation list-exports \
+            --region ${{ env.AWS_REGION }} \
+            --query "Exports[?Name=='retail-etl-cf-input-bucket-name'].Value" \
+            --output text)
+
+          echo "INPUT_BUCKET=$INPUT_BUCKET" >> "$GITHUB_ENV"
+
+          if [ -z "$INPUT_BUCKET" ] || [ "$INPUT_BUCKET" == "None" ]; then
+            echo "bucket_found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bucket_found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Exit gracefully if bucket not found
+        if: steps.resolve.outputs.bucket_found == 'false'
+        run: |
+          echo "::warning::No _cf resources found. Run the deploy workflow first."
+          exit 0
+
+      - name: Double-check the bucket actually exists
+        if: steps.resolve.outputs.bucket_found == 'true'
         id: check_bucket
         run: |
-          if aws s3api head-bucket --bucket "${{ env.BUCKET_NAME }}" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          if aws s3api head-bucket --bucket "$INPUT_BUCKET" --region ${{ env.AWS_REGION }} 2>/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Exit gracefully if bucket not found
-        if: steps.check_bucket.outputs.exists == 'false'
+      - name: Exit gracefully if bucket is not actually reachable
+        if: steps.resolve.outputs.bucket_found == 'true' && steps.check_bucket.outputs.exists == 'false'
         run: |
-          echo "::warning::No _cf resources found. Bucket '${{ env.BUCKET_NAME }}' does not exist. Run the deploy workflow first."
+          echo "::warning::Bucket name was found in exports but is not reachable. Check stack state."
           exit 0
 
       - name: Verify file exists in sample-data/
@@ -57,8 +79,8 @@ jobs:
         if: steps.check_bucket.outputs.exists == 'true'
         run: |
           aws s3 cp "sample-data/${{ github.event.inputs.filename }}" \
-            "s3://${{ env.BUCKET_NAME }}/raw/${{ github.event.inputs.filename }}" \
+            "s3://$INPUT_BUCKET/raw/${{ github.event.inputs.filename }}" \
             --region ${{ env.AWS_REGION }}
 
-          echo "Uploaded ${{ github.event.inputs.filename }} to s3://${{ env.BUCKET_NAME }}/raw/"
+          echo "Uploaded ${{ github.event.inputs.filename }} to s3://$INPUT_BUCKET/raw/"
           echo "This will trigger Lambda -> Glue workflow -> crawlers automatically."
