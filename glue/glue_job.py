@@ -88,6 +88,40 @@ if not input_keys:
     raise Exception(f"No input files found at {input_path}")
 
 
+REQUIRED_COLUMNS = ["customer_name", "amount"]
+
+
+def validate_schema(df, input_path):
+    # Check required columns exist before anything downstream touches
+    # them. Without this, a missing column surfaces as a bare
+    # KeyError deep inside a later line (e.g. df["customer_name"]),
+    # which tells you nothing about which file or column was the
+    # problem. Fail here instead, with a message that names both.
+    missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+
+    if missing_columns:
+        raise ValueError(
+            f"Input at {input_path} is missing required column(s): "
+            f"{', '.join(missing_columns)}. "
+            f"Columns found: {list(df.columns)}"
+        )
+
+    # Check that "amount" actually contains numeric values. A CSV with
+    # a value like "N/A" or "1,200" in this column would otherwise
+    # only fail later, inside the discount calculation, as an opaque
+    # TypeError with no indication of which row or value caused it.
+    non_numeric_amount = pd.to_numeric(df["amount"], errors="coerce")
+    bad_rows = df[non_numeric_amount.isna() & df["amount"].notna()]
+
+    if not bad_rows.empty:
+        bad_values = bad_rows["amount"].tolist()
+        raise ValueError(
+            f"Input at {input_path} has non-numeric value(s) in "
+            f"'amount': {bad_values}. Every row's amount must be a "
+            f"plain number (e.g. 850.00, not '$850' or 'N/A')."
+        )
+
+
 # Read the CSV file(s) from S3, unioning everything into one DataFrame.
 df = pd.concat(
     [read_csv(input_bucket, key) for key in input_keys],
@@ -97,6 +131,12 @@ df = pd.concat(
 
 # Remove completely empty rows
 df = df.dropna(how="all")
+
+
+# Fail early, with a clear message, if the CSV doesn't have the shape
+# this job expects - rather than crashing later on a specific line
+# with no context about which file or column was the actual problem.
+validate_schema(df, input_path)
 
 
 # Convert customer names to uppercase.
